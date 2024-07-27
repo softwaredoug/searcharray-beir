@@ -8,10 +8,7 @@ from beir.retrieval.evaluation import EvaluateRetrieval
 import logging
 import pathlib
 import os
-import Stemmer
 
-
-stemmer = Stemmer.Stemmer('english', maxCacheSize=0)
 
 # Just some code to print debug information to stdout
 logging.basicConfig(format='%(asctime)s - %(message)s',

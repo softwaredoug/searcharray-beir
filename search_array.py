@@ -12,6 +12,7 @@ import string
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 from time import perf_counter
+from tokenizers import elasticsearch_english
 
 stemmer = Stemmer.Stemmer('english', maxCacheSize=0)
 
@@ -36,14 +37,23 @@ def stem_word(word):
     return stemmer.stemWord(word)
 
 
-def remove_posessive(word):
-    if word.endswith("'s"):
-        return word[:-2]
-    return word
+def remove_posessive(text):
+    text_without_posesession = []
+    for word in text.split():
+        if word.endswith("'s"):
+            text_without_posesession.append(word[:-2])
+        else:
+            text_without_posesession.append(word)
+    return " ".join(text_without_posesession)
 
 
 def split_on_case_change(s):
     matches = re.finditer(r'.+?(?:(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|$)', s)
+    return [m.group(0) for m in matches]
+
+
+def split_on_char_num_change(s):
+    matches = re.finditer(r'.+?(?:(?<=\d)(?=\D)|(?<=\D)(?=\d)|$)', s)
     return [m.group(0) for m in matches]
 
 
@@ -52,31 +62,63 @@ punct_trans = str.maketrans({key: ' ' for key in string.punctuation})
 all_trans = {**fold_to_ascii, **punct_trans}
 
 
-stopwords_list = ["the", "a", "an", "and", "but", "if", "or", "because", "as", "what", "which", "this", "that", "these", "those", "then",
-                  "just", "so", "than", "such", "both", "through", "about", "for", "is", "of"]
+elasticsearch_stopwords = ["a", "an", "and", "are", "as", "at", "be", "but", "by",
+                           "for", "if", "in", "into", "is", "it",
+                           "no", "not", "of", "on", "or", "such",
+                           "that", "the", "their", "then", "there", "these",
+                           "they", "this", "to", "was", "will", "with"]
 
 
 def snowball_tokenizer(text):
+    text = remove_posessive(text)
+    return snowball_tokenizer_noposs(text)
+
+
+def dumbsnowball_tokenizer(text):
+    text = text.translate(all_trans)
+    split = text.split()
+    return [stem_word(token.lower())
+            for token in split]
+
+
+def dumbsnowballnoposs_tokenizer_noposs(text):
+    text = remove_posessive(text)
+    return dumbsnowball_tokenizer(text)
+
+
+def snowball_tokenizer_noposs(text):
     text = text.translate(all_trans)
     split = text.split()
     sw_removed = []
 
     for tok in split:
-        if tok.lower() in stopwords_list:
+        if tok.lower() in elasticsearch_stopwords:
             sw_removed.append("")
             continue
         sw_removed.append(tok)
 
-    split = unnest_list([split_on_case_change(tok) for tok in sw_removed])
-    return [remove_posessive(stem_word(token.lower()))
-            for token in split]
+    return [stem_word(token.lower())
+            for token in sw_removed]
+
+
+def ws_tokenizer(text):
+    text = text.translate(all_trans)
+    split = text.split()
+    split = unnest_list([split_on_case_change(tok) for tok in split])
+    split = unnest_list([split_on_char_num_change(tok) for tok in split])
+    return [token.lower() for token in split]
+
+
+def ws_tokenizer_noposs(text):
+    text = remove_posessive(text)
+    return ws_tokenizer(text)
 
 
 def bm25_search(corpus, query):
-    query = snowball_tokenizer(query)
+    query = snowball_tokenizer_noposs(query)
     scores = np.zeros(len(corpus))
     for q in query:
-        scores += corpus['text_snowball'].array.score(q)
+        scores += corpus['text_snowball_noposs'].array.score(q)
     return scores
 
 
@@ -89,6 +131,17 @@ def get_top_k(corpus, scores, top_k):
 
     # Query -> Document IDs -> scores
     return {doc_id: score for doc_id, score in zip(top_k_ids, top_k_scores)}
+
+
+def maybe_add_tok_column(column, corpus, tokenizer, data_dir=DATA_DIR):
+    tokenizer_name = tokenizer.__name__
+    tokenizer_name = tokenizer_name.split("_")[0]
+    new_column = f"{column}_{tokenizer_name}"
+    if new_column not in corpus.columns:
+        logger.info("*****")
+        logger.info(f"Tokenizing {new_column}")
+        corpus[new_column] = SearchArray.index(corpus[column], data_dir=data_dir, tokenizer=tokenizer)
+    return corpus
 
 
 class SearchArraySearch(BaseSearch):
@@ -104,19 +157,22 @@ class SearchArraySearch(BaseSearch):
         try:
             corpus = pd.read_pickle(corpus_path)
             logger.info("Corpus Loaded")
-            return corpus
         except FileNotFoundError:
             corpus = pd.DataFrame(corpus)
             corpus.transpose()
-            for column in corpus.columns:
-                if corpus[column].dtype == 'object':
-                    corpus[column].fillna("", inplace=True)
-                    logger.info("*****")
-                    logger.info(f"Tokenizing {column}")
-                    corpus[f'{column}_snowball'] = SearchArray.index(corpus[column], data_dir=DATA_DIR, tokenizer=snowball_tokenizer)
-                    logger.info("*****")
+
+        orig_columns = corpus.columns
+
+        for column in corpus.columns:
+            if corpus[column].dtype == 'object':
+                corpus[column].fillna("", inplace=True)
+                for tokenizer in [snowball_tokenizer, ws_tokenizer,
+                                  elasticsearch_english, dumbsnowball_tokenizer]:
+                    corpus = maybe_add_tok_column(column, corpus, tokenizer, data_dir=self.data_dir)
+
+        if len(orig_columns) != len(corpus.columns) or not os.path.exists(corpus_path):
             pd.to_pickle(corpus, corpus_path)
-            return corpus
+        return corpus
 
     def search(self,
                corpus: Dict[str, Dict[str, str]],
@@ -141,6 +197,8 @@ class SearchArraySearch(BaseSearch):
                         elapsed = perf_counter() - start
                         qps = (ctr + 1) / elapsed
                         pbar.set_description(f"Processed {ctr + 1} queries | {qps:.2f} QPS")
+                        logger.info(f"query: {query_id} | tok_ws | {ws_tokenizer(query)}")
+                        logger.info(f"query: {query_id} | tok_sn | {snowball_tokenizer(query)}")
                         pbar.update(len(futures_to_query))
                         futures_to_query = {}
                     ctr += 1
