@@ -2,6 +2,8 @@ import re
 
 #
 # Taken from NLTK
+# https://www.nltk.org/_modules/nltk/stem/porter.html#demo
+
 
 class PorterStemmer:
     """
@@ -659,36 +661,12 @@ class PorterStemmer:
         return "<PorterStemmer>"
 
 
-
 def demo():
-    """
-    A demonstration of the porter stemmer on a sample from
-    the Penn Treebank corpus.
-    """
+    stemmer = PorterStemmer()
+    words = ["running", "flies", "dies", "agreed", "owned", "humbled", "sized", "meeting", "stating", "itemization"]
+    for word in words:
+        print(f"{word} -> {stemmer.stem(word)}")
 
-    from nltk import stem
-    from nltk.corpus import treebank
 
-    stemmer = stem.PorterStemmer()
-
-    orig = []
-    stemmed = []
-    for item in treebank.fileids()[:3]:
-        for (word, tag) in treebank.tagged_words(item):
-            orig.append(word)
-            stemmed.append(stemmer.stem(word))
-
-    # Convert the results to a string, and word-wrap them.
-    results = " ".join(stemmed)
-    results = re.sub(r"(.{,70})\s", r"\1\n", results + " ").rstrip()
-
-    # Convert the original to a string, and word wrap it.
-    original = " ".join(orig)
-    original = re.sub(r"(.{,70})\s", r"\1\n", original + " ").rstrip()
-
-    # Print the results.
-    print("-Original-".center(70).replace(" ", "*").replace("-", " "))
-    print(original)
-    print("-Results-".center(70).replace(" ", "*").replace("-", " "))
-    print(results)
-    print("*" * 70)
+if __name__ == "__main__":
+    demo()

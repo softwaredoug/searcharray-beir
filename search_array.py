@@ -12,7 +12,7 @@ import string
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 from time import perf_counter
-from tokenizers import elasticsearch_english
+from tokenizers import elasticsearchporter1_tokenizer, elasticsearchsnowball_tokenizer
 
 stemmer = Stemmer.Stemmer('english', maxCacheSize=0)
 
@@ -167,7 +167,7 @@ class SearchArraySearch(BaseSearch):
             if corpus[column].dtype == 'object':
                 corpus[column].fillna("", inplace=True)
                 for tokenizer in [snowball_tokenizer, ws_tokenizer,
-                                  elasticsearch_english, dumbsnowball_tokenizer]:
+                                  elasticsearchporter1_tokenizer, elasticsearchsnowball_tokenizer]:
                     corpus = maybe_add_tok_column(column, corpus, tokenizer, data_dir=self.data_dir)
 
         if len(orig_columns) != len(corpus.columns) or not os.path.exists(corpus_path):
