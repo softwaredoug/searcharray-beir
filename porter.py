@@ -4,6 +4,8 @@ import re
 # Taken from NLTK
 # https://www.nltk.org/_modules/nltk/stem/porter.html#demo
 
+from functools import lru_cache
+
 
 class PorterStemmer:
     """
@@ -631,6 +633,7 @@ class PorterStemmer:
             word, [("ll", "l", lambda stem: self._measure(word[:-1]) > 1)]
         )
 
+    @lru_cache(maxsize=16384)
     def stem(self, word, to_lowercase=True):
         """
         :param to_lowercase: if `to_lowercase=True` the word always lowercase

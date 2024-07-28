@@ -302,9 +302,16 @@ def test():
     counter = 0
     for tok, tok_str in every_tokenizer():
         tok("René fooBar 1920s running the the's foo2thee 👍👎 FooBar")
+        tok(""" Takes a word and a list of suffix-removal rules represented as
+        3-tuples, with the first element being the suffix to remove,
+        the second element being the string to replace it with, and the
+        final element being the condition for the rule to be applicable,
+        or None if the rule is unconditional.""")
+        tok("""Darkness on the Edge of Town is the fourth studio album by the American singer-songwriter Bruce Springsteen (pictured), released on June 2, 1978, by Columbia Records. The album was recorded during sessions in New York City with the E Street Band from June 1977 to March 1978, after a series of legal disputes between Springsteen and his former manager Mike Appel. Darkness musically strips the Wall of Sound production of its predecessor, Born to Run, for a rawer hard rock sound emphasizing the band as a whole. The lyrics focus on ill-fortuned characters who fight back against overwhelming odds. Released three years after Born to Run, Darkness did not sell as well but reached number five in the United States. Critics initially praised the album's music and performances but were divided on the lyrical content. In recent decades, Darkness has attracted acclaim as one of Springsteen's best works and has appeared on lists of the greatest albums of all time. (Full article...)""")
+
         counter += 1
 
 
 if __name__ == "__main__":
-    for i in range(10000):
+    for i in range(100):
         test()

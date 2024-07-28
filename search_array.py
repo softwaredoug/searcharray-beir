@@ -76,26 +76,19 @@ class SearchArraySearch(BaseSearch):
             corpus = pd.DataFrame(corpus)
             corpus.transpose()
 
-        orig_columns = corpus.columns
-
         if self.search_column not in corpus.columns:
             if corpus[self.source_column].dtype == 'object':
                 corpus[self.source_column].fillna("", inplace=True)
                 tok = tokenizer_from_str(self.tok_str)
+                orig_columns = corpus.columns
                 corpus = maybe_add_tok_column(self.source_column, corpus,
                                               tok,
                                               self.tok_str,
                                               data_dir=self.data_dir)
 
-        for column in corpus.columns:
-            if corpus[column].dtype == 'object':
-                corpus[column].fillna("", inplace=True)
-                for tok, tok_str in every_tokenizer():
-                    corpus = maybe_add_tok_column(column, corpus, tok, tok_str,
-                                                  data_dir=self.data_dir)
-
-        if len(orig_columns) != len(corpus.columns) or not os.path.exists(corpus_path):
-            pd.to_pickle(corpus, corpus_path)
+                if len(orig_columns) != len(corpus.columns) or not os.path.exists(corpus_path):
+                    logger.info(f"Saving to {corpus_path}")
+                    pd.to_pickle(corpus, corpus_path)
         return corpus
 
     def search(self,
