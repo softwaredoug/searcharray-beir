@@ -74,22 +74,28 @@ elasticsearch_english_stopwords = [
     "with"]
 
 
+std_pattern = r"\w\p{Extended_Pictographic}\p{WB:RegionalIndicator}"
+segment = re.compile(rf"[{std_pattern}](?:\B\S)*", flags=re.WORD)
+
+
 def standard_tokenizer(text: str) -> List[str]:
     """Tokenize text using a standard tokenizer."""
-    pattern = r"\w\p{Extended_Pictographic}\p{WB:RegionalIndicator}"
-
-    # Compile the regex pattern
-    segment = re.compile(rf"[{pattern}](?:\B\S)*", flags=re.WORD)
-
     # Find all tokens based on the word boundary pattern
     return segment.findall(text)
+
+
+possessive_suffix_regex = re.compile(r"['’]s$")
 
 
 def remove_posessive_suffixes(tokens: List[str]) -> List[str]:
     """Remove posessive suffixes from tokens."""
 
-    # As of 3.6, U+2019 RIGHT SINGLE QUOTATION MARK and U+FF07 FULLWIDTH APOSTROPHE are also treated as quotation marks.
-    return [re.sub(r"['’]s$", "", token) for token in tokens]
+    def remove_suffix(token: str) -> str:
+        if token.endswith("'s") or token.endswith("’s"):
+            return token[:-2]
+        return token
+
+    return [remove_suffix(token) for token in tokens]
 
 # "rebuilt_english": {
 #          "tokenizer":  "standard",
@@ -236,11 +242,28 @@ def tokenizer_from_str(tok_str):
     )
 
 
+def every_tokenizer_str():
+    case = 'N'
+    num = 'N'
+    for ascii_fold in ['a', 'N']:
+        for tok in ['s', 'w']:
+            for poss in ['p', 'N']:
+                for stop in ['s', 'N']:
+                    for stem in ['1', '2', 'N']:
+                        yield f"{ascii_fold}{tok}{case}{num}{poss}{stop}{stem}"
+
+
+def every_tokenizer():
+    for tok_str in every_tokenizer_str():
+        yield tokenizer_from_str(tok_str), tok_str
+
+
 def test():
     std_tokenizer = tokenizer_from_str("NsNNNNN")
     ws_tokenizer = tokenizer_from_str("NwNNNNN")
     assert std_tokenizer('👍👎') == ['👍', '👎']
     assert ws_tokenizer('👍👎') == ['👍👎']
+
 
     ascii_fold = tokenizer_from_str("asNNNNN")
     no_ascii_fold = tokenizer_from_str("NsNNNNN")
@@ -276,6 +299,12 @@ def test():
     assert split_on_num("foo2thee") == ["foo", "2", "thee"]
     assert no_split_on_sum("foo2thee") == ["foo2thee"]
 
+    counter = 0
+    for tok, tok_str in every_tokenizer():
+        tok("René fooBar 1920s running the the's foo2thee 👍👎 FooBar")
+        counter += 1
+
 
 if __name__ == "__main__":
-    test()
+    for i in range(10000):
+        test()
