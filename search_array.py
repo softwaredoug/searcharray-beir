@@ -55,10 +55,24 @@ def maybe_add_tok_column(column, corpus, tokenizer, tok_str, data_dir=DATA_DIR):
     return corpus
 
 
+# Elasticsearch's default English analyzer
+# std tokenizer, posessive, stopwords, porter v1
+ES_DEFAULT_ENGLISH = "text_NsNNlps1"
+
+# Ascii folding, with snowball stemming (porter v2), no stopwords
+ASCII_SNOWBALL = "text_asNNlpN2"
+
+# Ascii ws snowball, WS TOK, split on number / case changes, with snowball stemming, no stopwords
+ASCII_WS_SNOWBALL = "text_awpNNlpN2"
+
+# Ascii ws snowball, WS TOK, split on number / case changes, with snowball stemming, no stopwords
+UTF8_WS_SNOWBALL = "text_NwpNNlpN2"
+
+
 class SearchArraySearch(BaseSearch):
     def __init__(self, data_dir=None,
                  name: Optional[str] = None,
-                 search_column='text_asNNps1',
+                 search_column=UTF8_WS_SNOWBALL,
                  search_callback=bm25_search):
         self.data_dir = data_dir
         self.name = name

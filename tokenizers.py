@@ -2,12 +2,17 @@ from typing import List, Optional
 import regex as re
 import os
 import string
+import enum
 import requests
 import Stemmer
+import logging
 from porter import PorterStemmer
 from functools import partial
 import unicodedata
 from ascii_fold import unicode_to_ascii
+
+
+logger = logging.getLogger(__name__)
 
 
 stemmer = Stemmer.Stemmer("english")
@@ -45,13 +50,19 @@ def remove_posessive(text):
     return " ".join(text_without_posesession)
 
 
+case_change_re = re.compile(r'.+?(?:(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|$)')
+
+
 def split_on_case_change(s):
-    matches = re.finditer(r'.+?(?:(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|$)', s)
+    matches = case_change_re.finditer(s)
     return [m.group(0) for m in matches]
 
 
+char_to_num_change_re = re.compile(r'.+?(?:(?<=\d)(?=\D)|(?<=\D)(?=\d)|$)')
+
+
 def split_on_char_num_change(s):
-    matches = re.finditer(r'.+?(?:(?<=\d)(?=\D)|(?<=\D)(?=\d)|$)', s)
+    matches = char_to_num_change_re.finditer(s)
     return [m.group(0) for m in matches]
 
 
@@ -82,6 +93,18 @@ def standard_tokenizer(text: str) -> List[str]:
     """Tokenize text using a standard tokenizer."""
     # Find all tokens based on the word boundary pattern
     return segment.findall(text)
+
+
+def ws_tokenizer(text: str) -> str:
+    return text.split()
+
+
+punct_to_ws = str.maketrans(string.punctuation, ' ' * len(string.punctuation))
+
+
+def split_punct(token):
+    result = token.translate(punct_to_ws).split()
+    return result
 
 
 possessive_suffix_regex = re.compile(r"['’]s$")
@@ -146,11 +169,19 @@ def fold_to_ascii(input_text):
     return unicode_to_ascii(input_text)
 
 
+class TokenizerSelection(enum.Enum):
+    STARDARD = "s"
+    WHITESPACE = "w"
+    WS_W_PUNCT = "p"
+
+
 def tokenizer(text: str,
               ascii_folding: bool,
               std_tokenizer: bool,
+              split_on_punct: bool,
               split_on_case: bool,
               split_on_num: bool,
+              lowercase: bool,
               remove_possessive: bool,
               stopwords_to_char: Optional[str],
               porter_version: Optional[int]) -> List[str]:
@@ -160,7 +191,15 @@ def tokenizer(text: str,
     if std_tokenizer:
         tokens = standard_tokenizer(text)
     else:
-        tokens = text.split()
+        tokens = ws_tokenizer(text)
+
+    # Strip trailing 's from tokens
+    if remove_possessive:
+        tokens = remove_posessive_suffixes(tokens)
+
+    # Split on punctuation
+    if split_on_punct:
+        tokens = unnest_list([split_punct(tok) for tok in tokens])
 
     # Split on case change FooBar -> Foo Bar
     if split_on_case:
@@ -171,13 +210,10 @@ def tokenizer(text: str,
         tokens = unnest_list([split_on_char_num_change(tok) for tok in tokens])
 
     # Lowercase
-    tokens = [token.lower() for token in tokens]
+    if lowercase:
+        tokens = [token.lower() for token in tokens]
 
-    # Strip 's from characters
-    if remove_possessive:
-        tokens = remove_posessive_suffixes(tokens)
-
-    # Replace stopwords with a character
+    # Replace stopwords with a 'blank' character
     if stopwords_to_char:
         tokens = [token if token not in elasticsearch_english_stopwords
                   else stopwords_to_char for token in tokens]
@@ -193,19 +229,40 @@ def tokenizer(text: str,
 
 def tokenizer_factory(ascii_folding: bool,
                       std_tokenizer: bool,
+                      split_on_punct: bool,
                       split_on_case: bool,
                       split_on_num: bool,
                       remove_possessive: bool,
+                      lowercase: bool,
                       stopwords_to_char: Optional[str],
                       porter_version: Optional[int]) -> partial:
-    return partial(tokenizer,
-                   ascii_folding=ascii_folding,
-                   std_tokenizer=std_tokenizer,
-                   split_on_case=split_on_case,
-                   split_on_num=split_on_num,
-                   remove_possessive=remove_possessive,
-                   stopwords_to_char=stopwords_to_char,
-                   porter_version=porter_version)
+
+    logger.info("***")
+    logger.info("Creating tokenizer with settings")
+    logger.info(f"ASCIIFolding:{ascii_folding}")
+    logger.info(f"StandardTokenizer:{std_tokenizer}")
+    logger.info(f"RemovePossessive:{remove_possessive}")
+    logger.info(f"SplitOnPunct:{split_on_punct}")
+    logger.info(f"SplitOnCase:{split_on_case}")
+    logger.info(f"SplitOnNum:{split_on_num}")
+    logger.info(f"Lowercase:{lowercase}")
+    logger.info(f"StopwordsToChar:{stopwords_to_char}")
+    logger.info(f"PorterVersion:{porter_version}")
+    tok_func = partial(tokenizer,
+                       ascii_folding=ascii_folding,
+                       std_tokenizer=std_tokenizer,
+                       split_on_punct=split_on_punct,
+                       split_on_case=split_on_case,
+                       split_on_num=split_on_num,
+                       lowercase=lowercase,
+                       remove_possessive=remove_possessive,
+                       stopwords_to_char=stopwords_to_char,
+                       porter_version=porter_version)
+
+    test_string = "MaryHad a little_lamb whose 1920s 12fleeceYards was supposedly white. The lamb's fleece was actually black..."
+    logger.info(f"Testing tokenizer with test string: {test_string}")
+    logger.info(f"Tokenizer output: {tok_func(test_string)}")
+    return tok_func
 
 
 def tokenizer_from_str(tok_str):
@@ -213,91 +270,123 @@ def tokenizer_from_str(tok_str):
     Each char corresponds to a different tokenizer setting.
     """
     # Validate args
-    if len(tok_str) != 7:
-        raise ValueError("Tokenizer string must be 7 characters long")
-    if tok_str[0] not in 'aN':
-        raise ValueError("First character must be either 'a' (ascii folding) or 'N' (no ascii folding)")
-    if tok_str[1] not in 'sw':
-        raise ValueError("Second character must be either 's' (standard tokenizer) or 'w' (whitespace tokenizer)")
-    if tok_str[2] not in 'cN':
-        raise ValueError("Third character must be either 's' (split on case) or 'N' (don't split on case)")
-    if tok_str[3] not in 'nN':
-        raise ValueError("Third character must be either 'n' (split on number) or 'N' (don't split on case)")
-    if tok_str[4] not in 'pN':
-        raise ValueError("Third character must be either 'p' (remove possessive) or 'N' (don't remove possessive)")
-    if tok_str[5] not in 'sN':
-        raise ValueError("Third character must be either 's' (stopwords to char) or 'N' (don't stopwords to char)")
-    if tok_str[6] not in '12N':
-        raise ValueError("Third character must be either '1' (porter version 1), '2' (porter version 2), or 'N' (no stemming)")
-    porter_version = int(tok_str[6]) if tok_str[6] != 'N' else None
+    if len(tok_str) != 9:
+        raise ValueError("Tokenizer string must be 9 characters long")
+    else:
+        if tok_str[0] not in 'aN':
+            raise ValueError(f"0th character must be either 'a' (ascii folding) or 'N' (no ascii folding) -- you passed {tok_str[0]}")
+        if tok_str[1] not in 'sw':
+            raise ValueError(f"1st character must be either 's' (standard tokenizer) or 'w' (whitespace tokenizer) -- you passed {tok_str[1]}")
+        if tok_str[2] not in 'pN':
+            raise ValueError(f"2nd character must be either 'p' (remove possessive) or 'N' (don't remove possessive) -- you passed {tok_str[2]}")
+        if tok_str[3] not in 'pN':
+            raise ValueError(f"3rd character must be either 'p' (split on punctuation) or 'N' (don't split on punctuation) -- you passed {tok_str[3]}")
+        if tok_str[4] not in 'cN':
+            raise ValueError(f"4th character must be either 'c' (split on case) or 'N' (don't split on case) -- you passed {tok_str[4]}")
+        if tok_str[5] not in 'nN':
+            raise ValueError(f"5th character must be either 'n' (split on letter->number) or 'N' (don't split on number) -- you passed {tok_str[5]}")
+        if tok_str[6] not in 'lN':
+            raise ValueError(f"6th character must be either 'l' (lowercase) or 'N' (don't lowercase) -- you passed {tok_str[6]}")
+        if tok_str[7] not in 'sN':
+            raise ValueError(f"7th character must be either 's' (stopwords to char) or 'N' (don't stopwords to char) -- you passed {tok_str[7]}")
+        if tok_str[8] not in '12N':
+            raise ValueError("8th character must be either '1' (porter version 1), '2' (porter version 2), or 'N' (no stemming) -- you passed {tok_str[8]}")
+        porter_version = int(tok_str[8]) if tok_str[8] != 'N' else None
 
-    return tokenizer_factory(
-        tok_str[0] == 'a',
-        std_tokenizer=tok_str[1] == 's',
-        split_on_case=tok_str[2] == 'c',
-        split_on_num=tok_str[3] == 'n',
-        remove_possessive=tok_str[4] == 'p',
-        stopwords_to_char='_' if tok_str[5] == 's' else None,
-        porter_version=porter_version
-    )
+        return tokenizer_factory(
+            tok_str[0] == 'a',
+            std_tokenizer=tok_str[1] == 's',
+            remove_possessive=tok_str[2] == 'p',
+            split_on_punct=tok_str[3] == 'p',
+            split_on_case=tok_str[4] == 'c',
+            split_on_num=tok_str[5] == 'n',
+            lowercase=tok_str[6] == 'l',
+            stopwords_to_char='_' if tok_str[7] == 's' else None,
+            porter_version=porter_version
+        )
 
 
 def every_tokenizer_str():
     case = 'N'
     num = 'N'
+    punctuation = 'p'
+    lowercase = 'l'
     for ascii_fold in ['a', 'N']:
         for tok in ['s', 'w']:
             for poss in ['p', 'N']:
                 for stop in ['s', 'N']:
                     for stem in ['1', '2', 'N']:
-                        yield f"{ascii_fold}{tok}{case}{num}{poss}{stop}{stem}"
+                        yield f"{ascii_fold}{tok}{poss}{punctuation}{case}{num}{lowercase}{stop}{stem}"
 
 
 def every_tokenizer():
     for tok_str in every_tokenizer_str():
         yield tokenizer_from_str(tok_str), tok_str
-
+#
+#  |- ASCII fold (a) or not (N)
+#  ||- Standard (s) or WS tokenizer (w)
+#  ||
+# "NsNNNNNNN"
+#    |||||||
+#    |||||||- Porter stem vs (1) vs (2) vs N/0 for none
+#    ||||||- Blank out stopwords (s) or not (N)
+#    |||||- Lowercase (l) or not (N)
+#    ||||- Split on letter/number transitions (n) or not (N)
+#    |||- Split on case changes (c) or not (N)
+#    ||- Split on punctuation (p) or not (N)
+#    |- Remove possessive suffixes (p) or not (N)
 
 def test():
-    std_tokenizer = tokenizer_from_str("NsNNNNN")
-    ws_tokenizer = tokenizer_from_str("NwNNNNN")
+    std_tokenizer = tokenizer_from_str("NsNNNNlNN")
+    ws_tokenizer = tokenizer_from_str("NwNNNNlNN")
     assert std_tokenizer('👍👎') == ['👍', '👎']
     assert ws_tokenizer('👍👎') == ['👍👎']
 
+    ws_split_punct_tokenizer = tokenizer_from_str("NwNpNNlNN")
+    assert ws_tokenizer('Mary-had a little_lamb') == ['mary-had', 'a', 'little_lamb']
+    assert ws_split_punct_tokenizer('Mary-had a little_lamb') == ['mary', 'had', 'a', 'little', 'lamb']
 
-    ascii_fold = tokenizer_from_str("asNNNNN")
-    no_ascii_fold = tokenizer_from_str("NsNNNNN")
+    ascii_fold = tokenizer_from_str("asNNNNlNN")
+    no_ascii_fold = tokenizer_from_str("NsNNNNlNN")
     assert ascii_fold("René") == ["rene"]
     assert no_ascii_fold("René") == ["rené"]
     assert (ascii_fold("àáâãäåçèéêëìíîïðñòóôõöøùúûüýþÿ")
             == ['aaaaaaceeeeiiiidnoooooouuuuyty'])
 
-    split_on_case_change = tokenizer_from_str("NscNNNN")
-    no_split_on_case_str = tokenizer_from_str("NsNNNNN")
+    split_on_case_change = tokenizer_from_str("NsNNcNlNN")
+    no_split_on_case_str = tokenizer_from_str("NsNNNNlNN")
     assert no_split_on_case_str("fooBar") == ["foobar"]
     assert split_on_case_change("fooBar") == ["foo", "bar"]
 
-    porter1 = tokenizer_from_str("NsNNNN1")
-    porter2 = tokenizer_from_str("NsNNNN2")
-    no_stem = tokenizer_from_str("NsNNNNN")
+    porter1 = tokenizer_from_str("NsNNNNlN1")
+    porter2 = tokenizer_from_str("NsNNNNlN2")
+    no_stem = tokenizer_from_str("NsNNNNlNN")
     assert porter1("1920s") == ["1920"]
     assert porter2("1920s") == ["1920s"]
     assert no_stem("running") == ["running"]
 
-    stopwords = tokenizer_from_str("NsNNNsN")
-    no_stopwords = tokenizer_from_str("NsNNNNN")
+    stopwords = tokenizer_from_str("NsNNNNlsN")
+    no_stopwords = tokenizer_from_str("NsNNNNlNN")
     assert stopwords("the") == ["_"]
     assert no_stopwords("the") == ["the"]
 
-    posessive = tokenizer_from_str("NsNNpNN")
-    no_possessive = tokenizer_from_str("NsNNNNN")
+    posessive = tokenizer_from_str("NspNNNlNN")
+    no_possessive = tokenizer_from_str("NsNNNNlNN")
     assert posessive("the's") == ["the"]
     assert no_possessive("the") == ["the"]
 
-    split_on_num = tokenizer_from_str("NsNnNNN")
-    no_split_on_sum = tokenizer_from_str("NsNNNNN")
+    lowercase = tokenizer_from_str("NsNNNNlNN")
+    no_lowercase = tokenizer_from_str("NsNNNNNNN")
+    assert lowercase("The") == ["the"]
+    assert no_lowercase("The") == ["The"]
+
+    split_on_num = tokenizer_from_str("NsNNNnlNN")
+    no_split_on_sum = tokenizer_from_str("NsNNNNlNN")
     assert split_on_num("foo2thee") == ["foo", "2", "thee"]
     assert no_split_on_sum("foo2thee") == ["foo2thee"]
+
+    posessive_std = tokenizer_from_str("NspNNNlNN")
+    assert posessive_std("cat's pajamas") == ["cat", "pajamas"]
 
     counter = 0
     for tok, tok_str in every_tokenizer():
