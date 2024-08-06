@@ -20,6 +20,7 @@ from beir import util, LoggingHandler
 from beir.datasets.data_loader import GenericDataLoader
 from beir.retrieval.evaluation import EvaluateRetrieval
 from beir.retrieval.search.lexical import BM25Search as BM25
+from time import perf_counter
 
 import pathlib, os, random
 import logging
@@ -71,7 +72,10 @@ model = BM25(index_name=index_name, hostname=hostname,
 retriever = EvaluateRetrieval(model)
 
 #### Retrieve dense results (format of results is identical to qrels)
+start = perf_counter()
 results = retriever.retrieve(corpus, queries)
+end = perf_counter()
+logging.info(f"Retrieval Time: {end - start} | QPS: {len(queries)/(end - start)}")
 
 #### Evaluate your retrieval using NDCG@k, MAP@K ...
 logging.info("Retriever evaluation for k in: {}".format(retriever.k_values))
