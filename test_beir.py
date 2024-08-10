@@ -35,7 +35,7 @@ def load_corpus(dataset):
     return corpus, queries, qrels
 
 
-if __name__ == '__main__':
+def run_benchmark():
     dataset = "msmarco"
     corpus, queries, qrels = load_corpus(dataset)
     print("BASE CORPUS LOADED")
@@ -51,3 +51,7 @@ if __name__ == '__main__':
         print(f"NDCG@10: {ndcg}")
         print(f"MAP@100: {_map}")
         print(f"Recall@10: {recall}")
+
+
+if __name__ == '__main__':
+    run_benchmark()

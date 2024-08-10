@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 import Stemmer
 import tqdm
+import cProfile
+from sort import get_top_k
 
 import random
 import os
@@ -29,23 +31,18 @@ logger = logging.getLogger(__name__)
 def bm25_search(corpus, query, column):
     tokenizer = corpus[column].array.tokenizer
     query_terms = tokenizer(query)
-    scores = np.zeros(len(corpus))
+    scores = None
     query_terms = set(query_terms)
     for term in query_terms:
         if term != "_":
-            scores += corpus[column].array.score(term)
+            term_scores = corpus[column].array.score(term)
+            if scores is None:
+                scores = term_scores
+            else:
+                scores += term_scores
+    if scores is None:
+        scores = np.zeros(len(corpus))
     return scores
-
-
-def get_top_k(corpus, scores, top_k):
-    """Get top k in format for BEIR."""
-    top_k_idx = np.argpartition(scores, -top_k)[-top_k:]
-    top_k_scores = scores[top_k_idx]
-    top_k_ids = corpus.index[top_k_idx].values
-
-    # Query -> Document IDs -> scores
-    results = {doc_id: score for doc_id, score in zip(top_k_ids, top_k_scores)}
-    return results
 
 
 def maybe_add_tok_column(column, corpus, tokenizer, tok_str, data_dir=DATA_DIR):
@@ -89,8 +86,8 @@ NO_LOWER_PORTER2 = "text_NsN|NNN|NN2"
 
 
 # Add special fields
-fields = [ES_DEFAULT_ENGLISH, ASCII_SNOWBALL, ASCII_WS_SNOWBALL, UTF8_WS_SNOWBALL,
-          FULL_SNOWBALL, FULL_PORTER, FULL_NOSTEM, NO_LOWER_NO_STEM, NO_LOWER_PORTER1, NO_LOWER_PORTER2] + every_tokenizer[:10]
+fields = [ES_DEFAULT_ENGLISH]  # , ASCII_SNOWBALL, ASCII_WS_SNOWBALL, UTF8_WS_SNOWBALL,
+         #  FULL_SNOWBALL, FULL_PORTER, FULL_NOSTEM, NO_LOWER_NO_STEM, NO_LOWER_PORTER1, NO_LOWER_PORTER2] + every_tokenizer[:10]
 
 
 def existing_indexed_corpus(data_dir=DATA_DIR, name: Optional[str] = None):
@@ -119,6 +116,7 @@ class SearchArraySearch(BaseSearch):
         self.tok_str = search_column.split("_")[-1]
         self.source_column = search_column.split("_")[0]
         self.search_callback = search_callback
+        self.profile = cProfile.Profile()
 
     def index_corpus(self, corpus):
         corpus_path = existing_indexed_corpus(self.data_dir, self.name)
@@ -126,6 +124,10 @@ class SearchArraySearch(BaseSearch):
             corpus = pd.read_pickle(corpus_path)
             logger.info(f"Corpus Loaded at {corpus_path}")
         except FileNotFoundError:
+            corpus = pd.DataFrame(corpus)
+            corpus.transpose()
+        except EOFError:
+            logger.error(f"Corpus at {corpus_path} is corrupted. Rebuilding.")
             corpus = pd.DataFrame(corpus)
             corpus.transpose()
 
@@ -144,23 +146,27 @@ class SearchArraySearch(BaseSearch):
                     pd.to_pickle(corpus, corpus_path)
         return corpus
 
-    def search(self,
-               corpus: Dict[str, Dict[str, str]],
-               queries: Dict[str, str],
-               top_k: int,
-               *args,
-               **kwargs) -> Dict[str, Dict[str, float]]:
-        corpus = self.index_corpus(corpus)
-        # corpus[self.search_column].array.posns.clear_cache()
+    def _search_single_threaded(self, corpus, queries, top_k):
+        start = perf_counter()
+        results = {}
+        ctr = 0
+        with tqdm.tqdm(total=len(queries)) as pbar:
+            for query_id, query in queries.items():
+                result_query = self.search_callback(corpus, query, self.search_column)
+                results[query_id] = get_top_k(corpus, result_query, top_k)
+                elapsed = perf_counter() - start
+                qps = (ctr + 1) / elapsed
+                pbar.set_description(f"Processed {ctr + 1} queries | {qps:.2f} QPS")
+                ctr += 1
+                pbar.update(1)
+        return results
+
+    def _search_multi_threaded(self, corpus, queries, top_k):
+        start = perf_counter()
         results = {}
         futures_to_query = {}
         ctr = 0
-        logger.info(f"Starting search of {self.search_column}")
-        bm25_search(corpus,
-                    'how many years did william bradford serve as governor of plymouth colony?',
-                    self.search_column)
-        start = perf_counter()
-        with ThreadPoolExecutor() as executor:
+        with ThreadPoolExecutor(max_workers=1) as executor:
             with tqdm.tqdm(total=len(queries)) as pbar:
                 for query_id, query in queries.items():
                     futures_to_query[executor.submit(self.search_callback, corpus, query, self.search_column)] = (query_id, query)
@@ -176,6 +182,19 @@ class SearchArraySearch(BaseSearch):
                         futures_to_query = {}
                     ctr += 1
         assert len(futures_to_query) == 0
+        return results
+
+    def search(self,
+               corpus: Dict[str, Dict[str, str]],
+               queries: Dict[str, str],
+               top_k: int,
+               *args,
+               **kwargs) -> Dict[str, Dict[str, float]]:
+        corpus = self.index_corpus(corpus)
+        # corpus[self.search_column].array.posns.clear_cache()
+        logger.info(f"Starting search of {self.search_column}")
+        results = self.profile.runcall(self._search_single_threaded, corpus, queries, top_k)
+        self.profile.dump_stats("search.prof")
         return results
 
 
