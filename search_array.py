@@ -150,6 +150,7 @@ class SearchArraySearch(BaseSearch):
         start = perf_counter()
         results = {}
         ctr = 0
+        corpus[self.search_column].array.posns.cache_gt_then = 10
         with tqdm.tqdm(total=len(queries)) as pbar:
             for query_id, query in queries.items():
                 result_query = self.search_callback(corpus, query, self.search_column)
@@ -166,7 +167,7 @@ class SearchArraySearch(BaseSearch):
         results = {}
         futures_to_query = {}
         ctr = 0
-        with ThreadPoolExecutor(max_workers=1) as executor:
+        with ThreadPoolExecutor() as executor:
             with tqdm.tqdm(total=len(queries)) as pbar:
                 for query_id, query in queries.items():
                     futures_to_query[executor.submit(self.search_callback, corpus, query, self.search_column)] = (query_id, query)
@@ -193,6 +194,7 @@ class SearchArraySearch(BaseSearch):
         corpus = self.index_corpus(corpus)
         # corpus[self.search_column].array.posns.clear_cache()
         logger.info(f"Starting search of {self.search_column}")
+        # results = self.profile.runcall(self._search_multi_threaded, corpus, queries, top_k)
         results = self.profile.runcall(self._search_single_threaded, corpus, queries, top_k)
         self.profile.dump_stats("search.prof")
         return results
