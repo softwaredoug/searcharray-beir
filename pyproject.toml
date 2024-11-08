@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "searcharray-beir"
+version = "0.1.0"
+description = ""
+authors = ["Doug Turnbull <softwaredoug@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+searcharray = "^0.0.72"
+lucytok = "^0.1.4"
+tqdm = "^4.67.0"
+beir = "^2.0.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
