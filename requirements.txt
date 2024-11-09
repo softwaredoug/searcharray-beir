@@ -1,4 +1,0 @@
-searcharray
-pystemmer
-beir
-tqdm

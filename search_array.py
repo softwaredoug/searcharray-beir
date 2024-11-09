@@ -2,26 +2,20 @@ from beir.retrieval.search.base import BaseSearch
 from searcharray import SearchArray
 import pandas as pd
 import numpy as np
-import Stemmer
 import tqdm
 import cProfile
 from sort import get_top_k
 
-import random
 import os
 from typing import Dict, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 from time import perf_counter
-from tokenizers import tokenizer_from_str, every_tokenizer_str
+from lucytok import english
 
-every_tokenizer = list(every_tokenizer_str())
-every_tokenizer = ["text_{tok}".format(tok=tok) for tok in every_tokenizer]
-random.shuffle(every_tokenizer)
 
-stemmer = Stemmer.Stemmer('english', maxCacheSize=0)
-
-DATA_DIR = ".searcharray"
+DATA_DIR = "~/.searcharray"
+DATA_DIR = os.path.expanduser(DATA_DIR)
 # Ensure datadir exists
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -64,30 +58,14 @@ def maybe_add_tok_column(column, corpus, tokenizer, tok_str, data_dir=DATA_DIR):
 
 # Elasticsearch's default English analyzer
 # std tokenizer, posessive, lowercase, stopwords, porter v1
-ES_DEFAULT_ENGLISH = "text_Nsp|NNN|ls1"
+ES_DEFAULT_ENGLISH = "text_Nsp->NNN->l->NNsN->1"
 
-# Ascii folding, with snowball stemming (porter v2), no stopwords
-ASCII_SNOWBALL = "text_asp|NNN|lN2"
 
-# Ascii ws snowball, WS TOK, split on number / case changes, with snowball stemming, no stopwords
-ASCII_WS_SNOWBALL = "text_awp|pNN|lN2"
-
-# Ascii ws snowball, WS TOK, split on number / case changes, with snowball stemming, no stopwords
-UTF8_WS_SNOWBALL = "text_Nwp|pNN|lN2"
-
-FULL_SNOWBALL = "text_asp|pcn|ls2"
-FULL_PORTER = "text_asp|pcn|ls1"
-FULL_NOSTEM = "text_asp|pcn|lsN"
-
-# Crazy tokenizers
-NO_LOWER_NO_STEM = "text_NsN|NNN|NNN"
-NO_LOWER_PORTER1 = "text_NsN|NNN|NN1"
-NO_LOWER_PORTER2 = "text_NsN|NNN|NN2"
+FULL_SNOWBALL = "text_asp->pcn->l->cbsp->1"
 
 
 # Add special fields
-fields = [ES_DEFAULT_ENGLISH]  # , ASCII_SNOWBALL, ASCII_WS_SNOWBALL, UTF8_WS_SNOWBALL,
-         #  FULL_SNOWBALL, FULL_PORTER, FULL_NOSTEM, NO_LOWER_NO_STEM, NO_LOWER_PORTER1, NO_LOWER_PORTER2] + every_tokenizer[:10]
+fields = [ES_DEFAULT_ENGLISH, FULL_SNOWBALL]  # , ASCII_SNOWBALL, ASCII_WS_SNOWBALL, UTF8_WS_SNOWBALL,
 
 
 def existing_indexed_corpus(data_dir=DATA_DIR, name: Optional[str] = None):
@@ -132,14 +110,16 @@ class SearchArraySearch(BaseSearch):
             corpus.transpose()
 
         if self.search_column not in corpus.columns:
+            logger.info(f"Reindexing {self.search_column}")
             if corpus[self.source_column].dtype == 'object':
                 corpus[self.source_column].fillna("", inplace=True)
-                tok = tokenizer_from_str(self.tok_str)
+                tok = english(self.tok_str)
                 orig_columns = corpus.columns
                 corpus = maybe_add_tok_column(self.source_column, corpus,
                                               tok,
                                               self.tok_str,
                                               data_dir=self.data_dir)
+                assert self.search_column in corpus.columns
 
                 if len(orig_columns) != len(corpus.columns) or not os.path.exists(corpus_path):
                     logger.info(f"Saving to {corpus_path}")

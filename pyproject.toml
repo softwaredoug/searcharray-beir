@@ -8,9 +8,9 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.10"
 searcharray = "^0.0.72"
-lucytok = "^0.1.4"
 tqdm = "^4.67.0"
 beir = "^2.0.0"
+lucytok = "0.1.5"
 
 
 [build-system]
