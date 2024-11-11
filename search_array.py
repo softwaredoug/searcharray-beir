@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 from time import perf_counter
 from lucytok import english
+from similarity import bm25_similarity_exp
 
 
 DATA_DIR = "~/.searcharray"
@@ -22,13 +23,75 @@ os.makedirs(DATA_DIR, exist_ok=True)
 logger = logging.getLogger(__name__)
 
 
-def bm25_search(corpus, query, column):
+sum_idfs_cache = {}
+
+
+def sum_idfs(corpus, search_column):
+    """Sum of document frequencies for each term in the given doc_ids."""
+    sdf_path = os.path.join(DATA_DIR, f"{search_column}_sum_idf.npy")
+    try:
+        return sum_idfs_cache[search_column]
+    except KeyError:
+        try:
+            sdfs = np.load(sdf_path)
+            sum_idfs_cache[search_column] = sdfs
+            return sdfs
+        except FileNotFoundError:
+            arr = corpus[search_column].array
+            sdfs = np.zeros(len(arr), dtype=np.float32)
+            logger.info(f"Computing sum of document frequencies for {search_column}")
+            num_docs = len(arr)
+            for doc_id in tqdm.tqdm(range(num_docs)):
+                terms = arr.term_mat[doc_id]
+                for term_id in terms[0].cols:
+                    dfs = arr.posns.docfreq(term_id)
+                    idf = np.log((num_docs + 1) / (dfs + 1)) + 1
+                    sdfs[doc_id] += idf
+            np.save(sdf_path, sdfs)
+            sum_idfs_cache[search_column] = sdfs
+            return sdfs
+
+
+def bm25_search_exp(corpus, query, column):
     tokenizer = corpus[column].array.tokenizer
     query_terms = tokenizer(query)
     scores = None
     query_terms = set(query_terms)
+
+    sum_idf = sum_idfs(corpus, search_column=column)
+    sim = bm25_similarity_exp(sum_idf)
+
     for term in query_terms:
         if term != "_":
+            term_scores = corpus[column].array.score(term, similarity=sim)
+            if scores is None:
+                scores = term_scores
+            else:
+                scores += term_scores
+    if scores is None:
+        scores = np.zeros(len(corpus))
+    return scores
+
+
+def flatten(nested_list):
+    flat_list = []
+    for item in nested_list:
+        if isinstance(item, list):
+            flat_list.extend(flatten(item))
+        else:
+            flat_list.append(item)
+    return flat_list
+
+
+def bm25_search(corpus, query, column):
+    tokenizer = corpus[column].array.tokenizer
+    query_terms = tokenizer(query, flatten=False)
+    scores = None
+    # query_terms = set(query_terms)
+    for term in query_terms:
+        if term != "_":
+            if isinstance(term, list):
+                term = flatten(term)
             term_scores = corpus[column].array.score(term)
             if scores is None:
                 scores = term_scores
@@ -58,14 +121,21 @@ def maybe_add_tok_column(column, corpus, tokenizer, tok_str, data_dir=DATA_DIR):
 
 # Elasticsearch's default English analyzer
 # std tokenizer, posessive, lowercase, stopwords, porter v1
-ES_DEFAULT_ENGLISH = "text_Nsp->NNN->l->NNsN->1"
+ES_DEFAULT_ENGLISH = "text_Nsp->NNN->l->sNNN->1"
 
 
-FULL_SNOWBALL = "text_asp->pcn->l->cbsp->1"
+EVERYTHING = "text_asp->pcn->l->scbp->1"
+EVERYTHING_NOSW = "text_asp->pcn->l->Ncbp->1"
+EVERYTHING_NO_SW_CP = "text_asp->pcn->l->NNbp->1"
+EVERYTHING_NO_SW_CP_BR = "text_asp->pcn->l->NNNp->1"
+EVERYTHING_NO_SW_CP_BR_PL = "text_asp->pcn->l->NNNN->1"
 
 
 # Add special fields
-fields = [ES_DEFAULT_ENGLISH, FULL_SNOWBALL]  # , ASCII_SNOWBALL, ASCII_WS_SNOWBALL, UTF8_WS_SNOWBALL,
+fields = [ES_DEFAULT_ENGLISH,
+          EVERYTHING, EVERYTHING_NOSW,
+          EVERYTHING_NO_SW_CP, EVERYTHING_NO_SW_CP_BR,
+          EVERYTHING_NO_SW_CP_BR_PL]
 
 
 def existing_indexed_corpus(data_dir=DATA_DIR, name: Optional[str] = None):
@@ -174,6 +244,7 @@ class SearchArraySearch(BaseSearch):
         corpus = self.index_corpus(corpus)
         # corpus[self.search_column].array.posns.clear_cache()
         logger.info(f"Starting search of {self.search_column}")
+        # sum_idfs(corpus, search_column=self.search_column)
         # results = self.profile.runcall(self._search_multi_threaded, corpus, queries, top_k)
         results = self.profile.runcall(self._search_single_threaded, corpus, queries, top_k)
         self.profile.dump_stats("search.prof")

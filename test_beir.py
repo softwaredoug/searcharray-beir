@@ -1,7 +1,7 @@
 from beir import util, LoggingHandler
 from beir.datasets.data_loader import GenericDataLoader
 import pandas as pd
-from search_array import SearchArraySearch, fields, indexed_columns
+from search_array import SearchArraySearch, fields
 from beir.retrieval.evaluation import EvaluateRetrieval
 
 
@@ -33,6 +33,39 @@ def load_corpus(dataset):
     corpus, queries, qrels = GenericDataLoader(data_folder=data_path).load(split="dev")
     corpus = pd.DataFrame(corpus).transpose()
     return corpus, queries, qrels
+
+
+def results_frame(results_file):
+    results = pd.read_pickle(results_file)
+    ranked = results.sort_values(['query_id', 'score'], ascending=[True, False])
+    ranked['rank'] = ranked.groupby('query_id').cumcount() + 1
+
+    corpus, queries, qrels = load_corpus("msmarco")
+    qframe = pd.Series(queries).to_frame("query")
+    qframe["qrels"] = pd.Series(qrels)
+    qframe['qrels'] = qframe['qrels'].apply(dict.keys).apply(list)
+    qframe = qframe.explode('qrels')
+    qframe = qframe.merge(corpus, how="left", left_on="qrels", right_index=True)
+    qframe = qframe.rename(columns={'title': 'target'})
+    results = qframe.merge(ranked, left_index=True, right_on="query_id")
+    results = results.merge(corpus, left_on="doc_id", right_index=True,
+                            how="left", suffixes=("_target", "_result")).drop(columns=["title"])
+    target_qrel = results.groupby(['query', 'doc_id', 'rank'])['qrels'].apply(list)
+    target_text = results.groupby(['query', 'doc_id', 'rank'])['text_target'].apply(list)
+
+    results = results.groupby(['query', 'doc_id', 'rank']).first()
+    results['qrels'] = target_qrel
+    results['text_target'] = target_text
+
+    results = results.reset_index().sort_values(['query', 'rank'], ascending=[True, True])
+    results['match'] = results.apply(lambda x: x['doc_id'] in x['qrels'], axis=1)
+    results['match_rank'] = 1e9
+    match_rank = results[results['match']].groupby(['query', 'doc_id'])['rank'].min()
+    results = results.set_index(['query', 'doc_id'])
+    results['match_rank'] = match_rank
+    results['match_rank'] = results['match_rank'].fillna(1e9)
+
+    return results
 
 
 def run_benchmark():

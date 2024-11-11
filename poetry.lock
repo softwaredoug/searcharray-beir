@@ -747,13 +747,13 @@ files = [
 
 [[package]]
 name = "lucytok"
-version = "0.1.5"
+version = "0.1.9"
 description = ""
 optional = false
 python-versions = "<4.0,>=3.10"
 files = [
-    {file = "lucytok-0.1.5-py3-none-any.whl", hash = "sha256:dd0c91ce8b9662f0b463a21c92fb0f156cae69cdb192aa10a401d5cb02044bdf"},
-    {file = "lucytok-0.1.5.tar.gz", hash = "sha256:7671716d30bf39acc2b22aaf27a23d24e2d65ce67bfa5231cff9600286253a26"},
+    {file = "lucytok-0.1.9-py3-none-any.whl", hash = "sha256:1c9abe1d154f514f9013a92498b12610b15b48429f8e63cc624eded5fd533e34"},
+    {file = "lucytok-0.1.9.tar.gz", hash = "sha256:53d00c6cec459e81b5ae8a9ba037295dbe0df32e26760c782bc8b1663bdd626a"},
 ]
 
 [package.dependencies]
@@ -2793,4 +2793,4 @@ propcache = ">=0.2.0"
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "7d495521e45812a0718f1b6a6bd785318cd0907b5f45da91fef46acf09196aa2"
+content-hash = "eac1f5ca29aa6198796f860bc76c0a427da47b9892ac5913929e1b65ad6bb95d"
